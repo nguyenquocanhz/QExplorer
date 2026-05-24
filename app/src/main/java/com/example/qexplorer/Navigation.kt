@@ -10,6 +10,8 @@ import com.example.qexplorer.ui.DashboardScreen
 import com.example.qexplorer.ui.ExplorerScreen
 import com.example.qexplorer.ui.SettingsScreen
 import com.example.qexplorer.ui.EditorScreen
+import com.example.qexplorer.ui.PhotoViewerScreen
+import com.example.qexplorer.ui.VideoPlayerScreen
 
 @Composable
 fun MainNavigation() {
@@ -43,6 +45,20 @@ fun MainNavigation() {
         }
         entry<Editor> { key ->
           EditorScreen(
+            filePath = key.path,
+            onBack = { backStack.removeLastOrNull() },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
+        entry<PhotoViewer> { key ->
+          PhotoViewerScreen(
+            filePath = key.path,
+            onBack = { backStack.removeLastOrNull() },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
+        entry<VideoPlayer> { key ->
+          VideoPlayerScreen(
             filePath = key.path,
             onBack = { backStack.removeLastOrNull() },
             modifier = Modifier.fillMaxSize()

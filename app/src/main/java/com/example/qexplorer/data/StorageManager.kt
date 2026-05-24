@@ -393,4 +393,50 @@ object StorageManager {
         // Return top 6 file types by size
         extMap.toList().sortedByDescending { it.second }.take(6)
     }
+
+    // Clipboard State
+    data class ClipboardItem(val file: FileItem, val isCut: Boolean)
+    private val _clipboard = kotlinx.coroutines.flow.MutableStateFlow<ClipboardItem?>(null)
+    val clipboard: kotlinx.coroutines.flow.StateFlow<ClipboardItem?> = _clipboard
+
+    fun setClipboard(file: FileItem, isCut: Boolean) {
+        _clipboard.value = ClipboardItem(file, isCut)
+    }
+
+    fun clearClipboard() {
+        _clipboard.value = null
+    }
+
+    // Copy File or Directory
+    suspend fun copyFileOrDirectory(sourcePath: String, destDirPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val source = File(sourcePath)
+            val destDir = File(destDirPath)
+            if (!destDir.exists()) destDir.mkdirs()
+            val dest = File(destDir, source.name)
+            if (source.isDirectory) {
+                source.copyRecursively(dest, overwrite = true)
+            } else {
+                source.copyTo(dest, overwrite = true)
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // Move File or Directory
+    suspend fun moveFileOrDirectory(sourcePath: String, destDirPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val source = File(sourcePath)
+            val destDir = File(destDirPath)
+            if (!destDir.exists()) destDir.mkdirs()
+            val dest = File(destDir, source.name)
+            source.renameTo(dest)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
 }

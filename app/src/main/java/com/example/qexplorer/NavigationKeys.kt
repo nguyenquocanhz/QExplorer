@@ -7,3 +7,5 @@ import kotlinx.serialization.Serializable
 @Serializable data class Explorer(val path: String = "", val category: String = "") : NavKey
 @Serializable data object Settings : NavKey
 @Serializable data class Editor(val path: String) : NavKey
+@Serializable data class PhotoViewer(val path: String) : NavKey
+@Serializable data class VideoPlayer(val path: String) : NavKey

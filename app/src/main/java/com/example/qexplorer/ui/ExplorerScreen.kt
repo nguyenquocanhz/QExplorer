@@ -53,6 +53,7 @@ fun ExplorerScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val clipboardItem by StorageManager.clipboard.collectAsState()
 
     var files by remember { mutableStateOf<List<FileItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -298,6 +299,85 @@ fun ExplorerScreen(
                     }
                 }
             }
+            
+            // Clipboard floating overlay panel
+            clipboardItem?.let { clipboard ->
+                val isMoving = clipboard.isCut
+                val actionName = if (isMoving) "Di chuyển" else "Sao chép"
+                
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isMoving) Icons.Rounded.ContentCut else Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "$actionName: ${clipboard.file.name}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Duyệt thư mục đích và nhấn Dán",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { StorageManager.clearClipboard() }) {
+                                Text("Hủy", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isLoading = true
+                                        val success = if (isMoving) {
+                                            StorageManager.moveFileOrDirectory(clipboard.file.path, currentPath)
+                                        } else {
+                                            StorageManager.copyFileOrDirectory(clipboard.file.path, currentPath)
+                                        }
+                                        isLoading = false
+                                        if (success) {
+                                            Toast.makeText(context, "Đã hoàn tất", Toast.LENGTH_SHORT).show()
+                                            StorageManager.clearClipboard()
+                                            refreshFiles()
+                                        } else {
+                                            Toast.makeText(context, "Thao tác thất bại", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Dán", fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -372,6 +452,16 @@ fun ExplorerScreen(
                                 }
                             }
                         }
+                    }
+                    ActionRow(icon = Icons.Rounded.ContentCopy, title = "Sao chép", tint = MaterialTheme.colorScheme.onSurface) {
+                        selectedFileForActions = null
+                        StorageManager.setClipboard(item, isCut = false)
+                        Toast.makeText(context, "Đã sao chép vào bộ nhớ tạm", Toast.LENGTH_SHORT).show()
+                    }
+                    ActionRow(icon = Icons.Rounded.ContentCut, title = "Cắt / Di chuyển", tint = MaterialTheme.colorScheme.onSurface) {
+                        selectedFileForActions = null
+                        StorageManager.setClipboard(item, isCut = true)
+                        Toast.makeText(context, "Đã cắt vào bộ nhớ tạm", Toast.LENGTH_SHORT).show()
                     }
                     ActionRow(icon = Icons.Rounded.Edit, title = "Đổi tên", tint = MaterialTheme.colorScheme.onSurface) {
                         showRenameDialog = true
@@ -555,7 +645,18 @@ fun handleItemClick(context: Context, item: FileItem, onNavigate: (NavKey) -> Un
     if (item.isDirectory) {
         onNavigate(Explorer(path = item.path))
     } else {
-        openFile(context, item)
+        val ext = item.extension.lowercase(Locale.getDefault())
+        when {
+            StorageManager.imageExtensions.contains(ext) -> {
+                onNavigate(com.example.qexplorer.PhotoViewer(path = item.path))
+            }
+            StorageManager.videoExtensions.contains(ext) -> {
+                onNavigate(com.example.qexplorer.VideoPlayer(path = item.path))
+            }
+            else -> {
+                openFile(context, item)
+            }
+        }
     }
 }
 
