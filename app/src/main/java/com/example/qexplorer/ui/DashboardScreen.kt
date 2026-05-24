@@ -45,6 +45,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation3.runtime.NavKey
 import com.example.qexplorer.Explorer
 import com.example.qexplorer.Settings as SettingsKey
+import com.example.qexplorer.WifiManager as WifiManagerKey
 import com.example.qexplorer.data.StorageInfo
 import com.example.qexplorer.data.StorageManager
 import com.example.qexplorer.data.formatSize
@@ -239,6 +240,13 @@ fun DashboardContent(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { onNavigate(WifiManagerKey) }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Wifi,
+                            contentDescription = "WiFi Manager",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                     IconButton(onClick = { onNavigate(SettingsKey) }) {
                         Icon(
                             imageVector = Icons.Rounded.Settings,
@@ -255,6 +263,7 @@ fun DashboardContent(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .navigationBarsPadding()
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -546,7 +555,7 @@ fun CategoryCard(item: CategoryItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(110.dp)
+            .heightIn(min = 110.dp)
             .clickable { onClick() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -554,7 +563,7 @@ fun CategoryCard(item: CategoryItem, onClick: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(

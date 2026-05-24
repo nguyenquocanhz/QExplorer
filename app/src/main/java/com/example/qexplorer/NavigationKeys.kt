@@ -9,3 +9,4 @@ import kotlinx.serialization.Serializable
 @Serializable data class Editor(val path: String) : NavKey
 @Serializable data class PhotoViewer(val path: String) : NavKey
 @Serializable data class VideoPlayer(val path: String) : NavKey
+@Serializable data object WifiManager : NavKey

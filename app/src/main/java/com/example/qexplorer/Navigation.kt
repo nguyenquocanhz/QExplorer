@@ -12,6 +12,7 @@ import com.example.qexplorer.ui.SettingsScreen
 import com.example.qexplorer.ui.EditorScreen
 import com.example.qexplorer.ui.PhotoViewerScreen
 import com.example.qexplorer.ui.VideoPlayerScreen
+import com.example.qexplorer.ui.WifiManagerScreen
 
 @Composable
 fun MainNavigation() {
@@ -60,6 +61,12 @@ fun MainNavigation() {
         entry<VideoPlayer> { key ->
           VideoPlayerScreen(
             filePath = key.path,
+            onBack = { backStack.removeLastOrNull() },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
+        entry<WifiManager> {
+          WifiManagerScreen(
             onBack = { backStack.removeLastOrNull() },
             modifier = Modifier.fillMaxSize()
           )

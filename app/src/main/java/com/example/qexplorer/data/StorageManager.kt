@@ -439,4 +439,87 @@ object StorageManager {
             false
         }
     }
+
+    // WiFi Config details model
+    data class WifiNetwork(val ssid: String, val preSharedKey: String, val security: String = "WPA")
+
+    // Parse WiFi configs (requires root)
+    suspend fun getSavedWifiPasswords(): List<WifiNetwork> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<WifiNetwork>()
+        try {
+            // Android 9+ WifiConfigStore.xml
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/misc/wifi/WifiConfigStore.xml"))
+            val reader = process.inputStream.bufferedReader()
+            var line = reader.readLine()
+            var currentSSID = ""
+            var currentPassword = ""
+            while (line != null) {
+                if (line.contains("name=\"SSID\"")) {
+                    currentSSID = line.substringAfter("value=\"").substringBefore("\"").trim('"')
+                }
+                if (line.contains("name=\"PreSharedKey\"")) {
+                    currentPassword = line.substringAfter("value=\"").substringBefore("\"").trim('"')
+                    if (currentSSID.isNotEmpty()) {
+                        list.add(WifiNetwork(currentSSID, currentPassword))
+                        currentSSID = ""
+                        currentPassword = ""
+                    }
+                }
+                line = reader.readLine()
+            }
+            process.destroy()
+        } catch (e: Exception) {
+            // Root failed or file missing
+        }
+
+        if (list.isEmpty()) {
+            try {
+                // Older devices wpa_supplicant.conf
+                val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/misc/wifi/wpa_supplicant.conf"))
+                val reader = process.inputStream.bufferedReader()
+                var line = reader.readLine()
+                var currentSSID = ""
+                var currentPassword = ""
+                while (line != null) {
+                    if (line.contains("ssid=")) {
+                        currentSSID = line.substringAfter("ssid=\"").substringBefore("\"").trim('"')
+                    }
+                    if (line.contains("psk=")) {
+                        currentPassword = line.substringAfter("psk=\"").substringBefore("\"").trim('"')
+                        if (currentSSID.isNotEmpty() && currentPassword.isNotEmpty()) {
+                            list.add(WifiNetwork(currentSSID, currentPassword))
+                            currentSSID = ""
+                            currentPassword = ""
+                        }
+                    }
+                    line = reader.readLine()
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                // Root failed
+            }
+        }
+        list.distinctBy { it.ssid }
+    }
+
+    // Generate offline WiFi QR code
+    fun generateWifiQrCode(ssid: String, psk: String, security: String): android.graphics.Bitmap? {
+        val formatContent = "WIFI:T:$security;S:$ssid;P:$psk;;"
+        return try {
+            val writer = com.google.zxing.qrcode.QRCodeWriter()
+            val bitMatrix = writer.encode(formatContent, com.google.zxing.BarcodeFormat.QR_CODE, 512, 512)
+            val width = bitMatrix.width
+            val height = bitMatrix.height
+            val bmp = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bmp.setPixel(x, y, if (bitMatrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                }
+            }
+            bmp
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
 }
