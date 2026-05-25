@@ -13,16 +13,25 @@ import com.example.qexplorer.ui.EditorScreen
 import com.example.qexplorer.ui.PhotoViewerScreen
 import com.example.qexplorer.ui.VideoPlayerScreen
 import com.example.qexplorer.ui.WifiManagerScreen
+import com.example.qexplorer.ui.TrashScreen
+import com.example.qexplorer.ui.ProviderScreenView
+import androidx.navigation3.runtime.NavKey
 
 @Composable
-fun MainNavigation() {
-  val backStack = rememberNavBackStack(Dashboard)
+fun MainNavigation(startDestination: NavKey = Dashboard) {
+  val backStack = rememberNavBackStack(startDestination)
 
   NavDisplay(
     backStack = backStack,
     onBack = { backStack.removeLastOrNull() },
     entryProvider =
       entryProvider {
+        entry<ProviderScreenView> {
+          ProviderScreenView(
+            onNavigate = { navKey -> backStack.add(navKey) },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
         entry<Dashboard> {
           DashboardScreen(
             onNavigate = { navKey -> backStack.add(navKey) },
@@ -33,6 +42,7 @@ fun MainNavigation() {
           ExplorerScreen(
             path = key.path,
             category = key.category,
+            isPicker = key.isPicker,
             onNavigate = { navKey -> backStack.add(navKey) },
             onBack = { backStack.removeLastOrNull() },
             modifier = Modifier.fillMaxSize()
@@ -54,6 +64,10 @@ fun MainNavigation() {
         entry<PhotoViewer> { key ->
           PhotoViewerScreen(
             filePath = key.path,
+            directoryPath = key.directoryPath,
+            category = key.category,
+            sortBy = key.sortBy,
+            sortAsc = key.sortAsc,
             onBack = { backStack.removeLastOrNull() },
             modifier = Modifier.fillMaxSize()
           )
@@ -67,6 +81,12 @@ fun MainNavigation() {
         }
         entry<WifiManager> {
           WifiManagerScreen(
+            onBack = { backStack.removeLastOrNull() },
+            modifier = Modifier.fillMaxSize()
+          )
+        }
+        entry<Trash> {
+          TrashScreen(
             onBack = { backStack.removeLastOrNull() },
             modifier = Modifier.fillMaxSize()
           )

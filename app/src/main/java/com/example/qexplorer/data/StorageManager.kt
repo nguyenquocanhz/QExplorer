@@ -522,4 +522,166 @@ object StorageManager {
             null
         }
     }
+
+    // Trash Bin Manager
+    object TrashManager {
+        val trashDir = File(rootPath, ".qexplorer_trash")
+        private val manifestFile = File(trashDir, "manifest.properties")
+
+        init {
+            if (!trashDir.exists()) {
+                trashDir.mkdirs()
+            }
+        }
+
+        private fun loadManifest(): java.util.Properties {
+            val props = java.util.Properties()
+            if (manifestFile.exists()) {
+                try {
+                    java.io.FileInputStream(manifestFile).use { fis ->
+                        props.load(fis)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            return props
+        }
+
+        private fun saveManifest(props: java.util.Properties) {
+            try {
+                java.io.FileOutputStream(manifestFile).use { fos ->
+                    props.store(fos, "QExplorer Trash Manifest")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        suspend fun getTrashFiles(): List<FileItem> = withContext(Dispatchers.IO) {
+            val list = mutableListOf<FileItem>()
+            val props = loadManifest()
+            val files = trashDir.listFiles() ?: return@withContext emptyList()
+            for (f in files) {
+                if (f.name == "manifest.properties") continue
+                val originalPath = props.getProperty(f.name) ?: ""
+                list.add(
+                    FileItem(
+                        name = f.name.substringAfter('_'), // remove timestamp prefix
+                        path = f.absolutePath, // path in trash
+                        isDirectory = f.isDirectory,
+                        size = if (f.isDirectory) 0 else f.length(),
+                        lastModified = f.lastModified(), // deletion time
+                        extension = f.extension.lowercase(Locale.getDefault())
+                    )
+                )
+            }
+            list.sortedByDescending { it.lastModified }
+        }
+
+        suspend fun moveToTrash(filePath: String): String? = withContext(Dispatchers.IO) {
+            try {
+                val source = File(filePath)
+                if (!source.exists()) return@withContext null
+                
+                val timestamp = System.currentTimeMillis()
+                val trashName = "${timestamp}_${source.name}"
+                val dest = File(trashDir, trashName)
+                
+                val success = source.renameTo(dest)
+                if (success) {
+                    val props = loadManifest()
+                    props.setProperty(trashName, source.absolutePath)
+                    saveManifest(props)
+                    dest.absolutePath
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+
+        suspend fun restoreFromTrash(trashPath: String): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val trashFile = File(trashPath)
+                if (!trashFile.exists()) return@withContext false
+                
+                val trashName = trashFile.name
+                val props = loadManifest()
+                val originalPath = props.getProperty(trashName) ?: return@withContext false
+                val dest = File(originalPath)
+                
+                // Create parent directories if they don't exist
+                dest.parentFile?.mkdirs()
+                
+                val success = trashFile.renameTo(dest)
+                if (success) {
+                    props.remove(trashName)
+                    saveManifest(props)
+                    true
+                } else {
+                    false
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+
+        suspend fun deletePermanently(trashPath: String): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val trashFile = File(trashPath)
+                if (!trashFile.exists()) return@withContext false
+                
+                val trashName = trashFile.name
+                val success = if (trashFile.isDirectory) {
+                    trashFile.deleteRecursively()
+                } else {
+                    trashFile.delete()
+                }
+                
+                if (success) {
+                    val props = loadManifest()
+                    props.remove(trashName)
+                    saveManifest(props)
+                    true
+                } else {
+                    false
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+
+        suspend fun emptyTrash(): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val files = trashDir.listFiles()
+                if (files != null) {
+                    for (f in files) {
+                        if (f.isDirectory) {
+                            f.deleteRecursively()
+                        } else {
+                            f.delete()
+                        }
+                    }
+                }
+                val props = loadManifest()
+                props.clear()
+                saveManifest(props)
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+        
+        fun getOriginalPath(trashPath: String): String {
+            val name = File(trashPath).name
+            val props = loadManifest()
+            return props.getProperty(name) ?: ""
+        }
+    }
 }

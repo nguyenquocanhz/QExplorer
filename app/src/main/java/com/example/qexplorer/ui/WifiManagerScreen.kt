@@ -3,15 +3,21 @@ package com.example.qexplorer.ui
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -31,7 +37,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.qexplorer.data.StorageManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,19 +69,71 @@ fun WifiManagerScreen(
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isPasswordVisible by remember { mutableStateOf(false) }
 
-    // Root Config Recovery States
-    var savedNetworks by remember { mutableStateOf<List<StorageManager.WifiNetwork>>(emptyList()) }
+    // Saved WiFi Lists states
+    var localHistory by remember { mutableStateOf<List<StorageManager.WifiNetwork>>(emptyList()) }
+    var savedNetworksRoot by remember { mutableStateOf<List<StorageManager.WifiNetwork>>(emptyList()) }
     var isLoadingRoot by remember { mutableStateOf(false) }
     var hasAttemptedRoot by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf(0) } // 0: Local History, 1: Root System
 
-    fun refreshSavedNetworks() {
+    fun loadLocalHistory() {
+        localHistory = getWifiHistory(context)
+    }
+
+    fun refreshSavedNetworksRoot() {
         coroutineScope.launch {
             isLoadingRoot = true
             hasAttemptedRoot = true
-            savedNetworks = StorageManager.getSavedWifiPasswords()
+            savedNetworksRoot = StorageManager.getSavedWifiPasswords()
             isLoadingRoot = false
-            if (savedNetworks.isEmpty()) {
-                Toast.makeText(context, "Không thể lấy cấu hình root", Toast.LENGTH_SHORT).show()
+            if (savedNetworksRoot.isEmpty()) {
+                Toast.makeText(context, "Không thể lấy cấu hình Root (Thiết bị chưa root)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        loadLocalHistory()
+    }
+
+    // QR Image Picker Launcher
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val contentResolver = context.contentResolver
+                val qrText = withContext(Dispatchers.IO) {
+                    try {
+                        contentResolver.openInputStream(uri).use { inputStream ->
+                            val bitmap = BitmapFactory.decodeStream(inputStream)
+                            if (bitmap != null) {
+                                decodeQrCode(bitmap)
+                            } else null
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                if (qrText != null) {
+                    val (scannedSsid, scannedPsk, scannedSec) = parseWifiQrContent(qrText)
+                    if (scannedSsid.isNotEmpty()) {
+                        ssid = scannedSsid
+                        password = scannedPsk
+                        security = scannedSec
+                        qrBitmap = StorageManager.generateWifiQrCode(scannedSsid, scannedPsk, scannedSec)
+                        
+                        // Save to local history
+                        saveWifiToHistory(context, scannedSsid, scannedPsk, scannedSec)
+                        loadLocalHistory()
+                        
+                        Toast.makeText(context, "Đã đọc thành công Wifi: $scannedSsid", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Mã QR không đúng định dạng WiFi", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(context, "Không tìm thấy mã QR WiFi trong hình ảnh này", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -99,7 +159,7 @@ fun WifiManagerScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            // Section 1: Manual Wifi QR Code Generator
+            // Section 1: Manual Wifi QR Code Generator & QR Import
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -107,13 +167,32 @@ fun WifiManagerScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            text = "Tạo mã QR kết nối nhanh",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Tạo mã QR kết nối nhanh",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            
+                            // Import from QR Image Button
+                            TextButton(
+                                onClick = { imagePickerLauncher.launch("image/*") },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Quét từ ảnh thư viện", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         OutlinedTextField(
                             value = ssid,
@@ -177,7 +256,11 @@ fun WifiManagerScreen(
                             onClick = {
                                 if (ssid.trim().isNotEmpty()) {
                                     qrBitmap = StorageManager.generateWifiQrCode(ssid, password, security)
-                                    if (qrBitmap == null) {
+                                    if (qrBitmap != null) {
+                                        // Save to history
+                                        saveWifiToHistory(context, ssid, password, security)
+                                        loadLocalHistory()
+                                    } else {
                                         Toast.makeText(context, "Không thể tạo QR", Toast.LENGTH_SHORT).show()
                                     }
                                 } else {
@@ -190,7 +273,7 @@ fun WifiManagerScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Rounded.QrCode, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Tạo mã QR")
+                                Text("Tạo mã QR & Lưu lịch sử")
                             }
                         }
 
@@ -234,95 +317,136 @@ fun WifiManagerScreen(
                 }
             }
 
-            // Section 2: Root WiFi Saved Networks Recovery
+            // Section 2: Tabs for Saved Networks
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                TabRow(
+                    selectedTabIndex = activeTab,
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = "Xem mật khẩu đã lưu",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Yêu cầu thiết bị đã ROOT",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            if (isLoadingRoot) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                            } else {
-                                IconButton(onClick = { refreshSavedNetworks() }) {
-                                    Icon(Icons.Rounded.Refresh, contentDescription = "Quét mạng", tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (!hasAttemptedRoot) {
-                            Button(
-                                onClick = { refreshSavedNetworks() },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Kiểm tra & Quét thiết bị")
-                            }
-                        } else if (savedNetworks.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Không tìm thấy cấu hình hoặc thiết bị chưa Root. Bạn vẫn có thể tạo mã QR thủ công ở trên để chia sẻ.",
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
+                    Tab(
+                        selected = activeTab == 0,
+                        onClick = { activeTab = 0 },
+                        text = { Text("Đã lưu (Cục bộ)", fontWeight = FontWeight.Bold) }
+                    )
+                    Tab(
+                        selected = activeTab == 1,
+                        onClick = { activeTab = 1 },
+                        text = { Text("Hệ thống (Root)", fontWeight = FontWeight.Bold) }
+                    )
                 }
             }
 
-            // List of saved networks (if root successfully loaded them)
-            if (savedNetworks.isNotEmpty()) {
-                items(savedNetworks) { net ->
-                    SavedWifiRow(
-                        network = net,
-                        onCopy = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = android.content.ClipData.newPlainText("Wifi Password", net.preSharedKey)
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Đã sao chép mật khẩu Wifi", Toast.LENGTH_SHORT).show()
-                        },
-                        onGenerateQr = {
-                            ssid = net.ssid
-                            password = net.preSharedKey
-                            security = net.security
-                            qrBitmap = StorageManager.generateWifiQrCode(net.ssid, net.preSharedKey, net.security)
-                            Toast.makeText(context, "Đã tạo QR cho ${net.ssid}", Toast.LENGTH_SHORT).show()
+            // Section 3: Render Lists based on Active Tab
+            if (activeTab == 0) {
+                // Local History
+                if (localHistory.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Rounded.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Chưa có lịch sử WiFi nào", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                Text("Nhập từ QR hoặc tạo QR để lưu vào lịch sử", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 11.sp)
+                            }
                         }
-                    )
+                    }
+                } else {
+                    items(localHistory) { net ->
+                        SavedWifiRow(
+                            network = net,
+                            showDelete = true,
+                            onDelete = {
+                                deleteWifiFromHistory(context, net.ssid)
+                                loadLocalHistory()
+                            },
+                            onCopy = {
+                                copyToClipboard(context, net.preSharedKey)
+                                Toast.makeText(context, "Đã sao chép mật khẩu Wifi", Toast.LENGTH_SHORT).show()
+                            },
+                            onGenerateQr = {
+                                ssid = net.ssid
+                                password = net.preSharedKey
+                                security = net.security
+                                qrBitmap = StorageManager.generateWifiQrCode(net.ssid, net.preSharedKey, net.security)
+                                Toast.makeText(context, "Đã hiển thị QR cho ${net.ssid}", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                }
+            } else {
+                // Root system networks
+                if (!hasAttemptedRoot) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Button(
+                                onClick = { refreshSavedNetworksRoot() },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.Security, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Quét hệ thống (Yêu cầu Root)")
+                                }
+                            }
+                        }
+                    }
+                } else if (isLoadingRoot) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                } else if (savedNetworksRoot.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Thiết bị chưa root hoặc không thể truy cập cấu hình hệ thống. Bạn hãy sử dụng tab 'Đã lưu (Cục bộ)' để tạo và lưu mật khẩu WiFi.",
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    items(savedNetworksRoot) { net ->
+                        SavedWifiRow(
+                            network = net,
+                            showDelete = false,
+                            onDelete = {},
+                            onCopy = {
+                                copyToClipboard(context, net.preSharedKey)
+                                Toast.makeText(context, "Đã sao chép mật khẩu Wifi", Toast.LENGTH_SHORT).show()
+                            },
+                            onGenerateQr = {
+                                ssid = net.ssid
+                                password = net.preSharedKey
+                                security = net.security
+                                qrBitmap = StorageManager.generateWifiQrCode(net.ssid, net.preSharedKey, net.security)
+                                Toast.makeText(context, "Đã hiển thị QR cho ${net.ssid}", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -332,6 +456,8 @@ fun WifiManagerScreen(
 @Composable
 fun SavedWifiRow(
     network: StorageManager.WifiNetwork,
+    showDelete: Boolean,
+    onDelete: () -> Unit,
     onCopy: () -> Unit,
     onGenerateQr: () -> Unit
 ) {
@@ -355,13 +481,13 @@ fun SavedWifiRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Mật khẩu: ${network.preSharedKey}",
+                    text = if (network.preSharedKey.isEmpty()) "Không có mật khẩu" else "Mật khẩu: ${network.preSharedKey}",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 IconButton(onClick = onGenerateQr) {
                     Icon(
                         imageVector = Icons.Rounded.QrCode,
@@ -376,7 +502,98 @@ fun SavedWifiRow(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (showDelete) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            imageVector = Icons.Rounded.DeleteOutline,
+                            contentDescription = "Xóa lịch sử",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+fun copyToClipboard(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = android.content.ClipData.newPlainText("Wifi Password", text)
+    clipboard.setPrimaryClip(clip)
+}
+
+// QR Decoder from bitmap using ZXing
+fun decodeQrCode(bitmap: Bitmap): String? {
+    val width = bitmap.width
+    val height = bitmap.height
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+    val source = com.google.zxing.RGBLuminanceSource(width, height, pixels)
+    val binaryBitmap = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+    return try {
+        val result = com.google.zxing.MultiFormatReader().decode(binaryBitmap)
+        result.text
+    } catch (e: Exception) {
+        null
+    }
+}
+
+// Parse WiFi QR: WIFI:T:WPA;S:MySSID;P:myPassword;;
+fun parseWifiQrContent(content: String): Triple<String, String, String> {
+    if (!content.startsWith("WIFI:", ignoreCase = true)) {
+        return Triple("", "", "")
+    }
+    val temp = content.substring(5)
+    val ssid = getValueForField("S:", temp)
+    val psk = getValueForField("P:", temp)
+    val sec = getValueForField("T:", temp).ifEmpty { "WPA" }
+    return Triple(ssid, psk, sec)
+}
+
+private fun getValueForField(field: String, content: String): String {
+    val index = content.indexOf(field)
+    if (index == -1) return ""
+    val start = index + field.length
+    var end = content.indexOf(";", start)
+    if (end == -1) end = content.length
+    return content.substring(start, end)
+        .replace("\\;", ";")
+        .replace("\\:", ":")
+        .replace("\\\\", "\\")
+        .trim('"')
+}
+
+// SharedPreferences Wi-Fi History helpers
+fun saveWifiToHistory(context: Context, ssid: String, psk: String, security: String) {
+    val prefs = context.getSharedPreferences("qexplorer_wifi_history", Context.MODE_PRIVATE)
+    val raw = prefs.getString("history", "") ?: ""
+    val list = raw.split("\u001E").filter { it.isNotEmpty() }.toMutableList()
+    
+    // Remove if SSID already exists in history to update it
+    list.removeAll { it.split("\u001F").firstOrNull() == ssid }
+    
+    val record = "$ssid\u001F$psk\u001F$security"
+    list.add(0, record)
+    
+    prefs.edit().putString("history", list.joinToString("\u001E")).apply()
+}
+
+fun getWifiHistory(context: Context): List<StorageManager.WifiNetwork> {
+    val prefs = context.getSharedPreferences("qexplorer_wifi_history", Context.MODE_PRIVATE)
+    val raw = prefs.getString("history", "") ?: ""
+    if (raw.isEmpty()) return emptyList()
+    return raw.split("\u001E").filter { it.isNotEmpty() }.mapNotNull { record ->
+        val parts = record.split("\u001F")
+        if (parts.size >= 3) {
+            StorageManager.WifiNetwork(parts[0], parts[1], parts[2])
+        } else null
+    }
+}
+
+fun deleteWifiFromHistory(context: Context, ssid: String) {
+    val prefs = context.getSharedPreferences("qexplorer_wifi_history", Context.MODE_PRIVATE)
+    val raw = prefs.getString("history", "") ?: ""
+    val list = raw.split("\u001E").filter { it.isNotEmpty() }.toMutableList()
+    list.removeAll { it.split("\u001F").firstOrNull() == ssid }
+    prefs.edit().putString("history", list.joinToString("\u001E")).apply()
 }

@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -47,6 +48,7 @@ import java.util.*
 fun ExplorerScreen(
     path: String,
     category: String,
+    isPicker: Boolean = false,
     onNavigate: (NavKey) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -70,8 +72,16 @@ fun ExplorerScreen(
     var showDetailsDialog by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
 
+    val selectedFiles = remember { mutableStateListOf<FileItem>() }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showMultiDeleteConfirmDialog by remember { mutableStateOf(false) }
+
     val isCategoryMode = category.isNotEmpty()
     val currentPath = if (isCategoryMode) "" else path.ifEmpty { StorageManager.rootPath }
+
+    LaunchedEffect(currentPath, category) {
+        selectedFiles.clear()
+    }
 
     // Fetch Files
     fun refreshFiles() {
@@ -100,103 +110,175 @@ fun ExplorerScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             Column {
-                TopAppBar(
-                    title = {
-                        Column {
+                if (selectedFiles.isNotEmpty()) {
+                    TopAppBar(
+                        title = {
                             Text(
-                                text = if (isCategoryMode) {
-                                    category.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-                                } else {
-                                    val f = File(currentPath)
-                                    if (f.absolutePath == StorageManager.rootPath) "Bộ nhớ trong" else f.name
-                                },
+                                text = "Đã chọn ${selectedFiles.size} mục",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp
                             )
-                            if (!isCategoryMode && filteredFiles.isNotEmpty()) {
-                                Text(
-                                    text = "${filteredFiles.size} mục",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { selectedFiles.clear() }) {
+                                Icon(imageVector = Icons.Rounded.Close, contentDescription = "Hủy chọn")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = {
+                                val allNormalFiles = filteredFiles.filter { !it.isDirectory }
+                                if (selectedFiles.size == allNormalFiles.size) {
+                                    selectedFiles.clear()
+                                } else {
+                                    selectedFiles.clear()
+                                    selectedFiles.addAll(allNormalFiles)
+                                }
+                            }) {
+                                val allNormalFiles = filteredFiles.filter { !it.isDirectory }
+                                Icon(
+                                    imageVector = if (selectedFiles.size == allNormalFiles.size && allNormalFiles.isNotEmpty()) {
+                                        Icons.Rounded.Deselect
+                                    } else {
+                                        Icons.Rounded.SelectAll
+                                    },
+                                    contentDescription = "Chọn tất cả"
                                 )
                             }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(imageVector = Icons.Rounded.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    actions = {
-                        // Search Button
-                        IconButton(onClick = {
-                            isSearchActive = !isSearchActive
-                            if (!isSearchActive) searchQuery = ""
-                        }) {
-                            Icon(
-                                imageVector = if (isSearchActive) Icons.Rounded.Close else Icons.Rounded.Search,
-                                contentDescription = "Search"
-                            )
-                        }
-
-                        // Layout Toggle
-                        IconButton(onClick = { isGridView = !isGridView }) {
-                            Icon(
-                                imageVector = if (isGridView) Icons.Rounded.List else Icons.Rounded.GridView,
-                                contentDescription = "Toggle Layout"
-                            )
-                        }
-
-                        // Sort Menu
-                        var showSortMenu by remember { mutableStateOf(false) }
-                        Box {
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(imageVector = Icons.Rounded.Sort, contentDescription = "Sort")
+                            
+                            IconButton(onClick = {
+                                shareFiles(context, selectedFiles)
+                            }) {
+                                Icon(imageVector = Icons.Rounded.Share, contentDescription = "Chia sẻ")
                             }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Sắp xếp theo Tên (A-Z)") },
-                                    leadingIcon = { Icon(Icons.Rounded.Abc, contentDescription = null) },
-                                    onClick = {
-                                        sortBy = "name"
-                                        sortAsc = true
-                                        showSortMenu = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Sắp xếp theo Ngày") },
-                                    leadingIcon = { Icon(Icons.Rounded.CalendarToday, contentDescription = null) },
-                                    onClick = {
-                                        sortBy = "date"
-                                        sortAsc = false
-                                        showSortMenu = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Sắp xếp theo Kích thước") },
-                                    leadingIcon = { Icon(Icons.Rounded.FormatLineSpacing, contentDescription = null) },
-                                    onClick = {
-                                        sortBy = "size"
-                                        sortAsc = false
-                                        showSortMenu = false
-                                    }
-                                )
+                            
+                            IconButton(onClick = {
+                                showMultiDeleteConfirmDialog = true
+                            }) {
+                                Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Xóa", tint = Color.Red)
                             }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            actionIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     )
-                )
+                } else {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    text = if (isCategoryMode) {
+                                        category.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                                    } else {
+                                        val f = File(currentPath)
+                                        if (f.absolutePath == StorageManager.rootPath) "Bộ nhớ trong" else f.name
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                                if (!isCategoryMode && filteredFiles.isNotEmpty()) {
+                                    Text(
+                                        text = "${filteredFiles.size} mục",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(imageVector = Icons.Rounded.ArrowBack, contentDescription = "Back")
+                            }
+                        },
+                        actions = {
+                            // Search Button
+                            IconButton(onClick = {
+                                isSearchActive = !isSearchActive
+                                if (!isSearchActive) searchQuery = ""
+                            }) {
+                                Icon(
+                                    imageVector = if (isSearchActive) Icons.Rounded.Close else Icons.Rounded.Search,
+                                    contentDescription = "Search"
+                                )
+                            }
+
+                            // Multi-select checklist button
+                            IconButton(onClick = {
+                                val normalFiles = filteredFiles.filter { !it.isDirectory }
+                                if (normalFiles.isNotEmpty()) {
+                                    selectedFiles.add(normalFiles.first())
+                                } else {
+                                    Toast.makeText(context, "Thư mục không có tập tin để chọn", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Checklist,
+                                    contentDescription = "Chọn nhiều"
+                                )
+                            }
+
+                            // Layout Toggle
+                            IconButton(onClick = { isGridView = !isGridView }) {
+                                Icon(
+                                    imageVector = if (isGridView) Icons.Rounded.List else Icons.Rounded.GridView,
+                                    contentDescription = "Toggle Layout"
+                                )
+                            }
+
+                            // Sort Menu
+                            var showSortMenu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { showSortMenu = true }) {
+                                    Icon(imageVector = Icons.Rounded.Sort, contentDescription = "Sort")
+                                }
+                                DropdownMenu(
+                                    expanded = showSortMenu,
+                                    onDismissRequest = { showSortMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Sắp xếp theo Tên (A-Z)") },
+                                        leadingIcon = { Icon(Icons.Rounded.Abc, contentDescription = null) },
+                                        onClick = {
+                                            sortBy = "name"
+                                            sortAsc = true
+                                            showSortMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Sắp xếp theo Ngày") },
+                                        leadingIcon = { Icon(Icons.Rounded.CalendarToday, contentDescription = null) },
+                                        onClick = {
+                                            sortBy = "date"
+                                            sortAsc = false
+                                            showSortMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Sắp xếp theo Kích thước") },
+                                        leadingIcon = { Icon(Icons.Rounded.FormatLineSpacing, contentDescription = null) },
+                                        onClick = {
+                                            sortBy = "size"
+                                            sortAsc = false
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
 
                 // Search Bar
                 AnimatedVisibility(
-                    visible = isSearchActive,
+                    visible = isSearchActive && selectedFiles.isEmpty(),
                     enter = expandVertically() + fadeIn(),
                     exit = shrinkVertically() + fadeOut()
                 ) {
@@ -218,7 +300,7 @@ fun ExplorerScreen(
                 }
 
                 // Breadcrumbs (Only in folder mode)
-                if (!isCategoryMode) {
+                if (!isCategoryMode && selectedFiles.isEmpty()) {
                     BreadcrumbNavigation(
                         rootPath = StorageManager.rootPath,
                         currentPath = currentPath,
@@ -268,13 +350,28 @@ fun ExplorerScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(filteredFiles) { fileItem ->
+                            val isSelected = selectedFiles.contains(fileItem)
                             GridFileItemView(
                                 item = fileItem,
+                                isSelected = isSelected,
+                                isMultiSelectActive = selectedFiles.isNotEmpty(),
                                 onClick = {
-                                    handleItemClick(context, fileItem, onNavigate)
+                                    if (selectedFiles.isNotEmpty()) {
+                                        if (fileItem.isDirectory) {
+                                            Toast.makeText(context, "Chỉ có thể chọn tập tin để chia sẻ", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            if (isSelected) selectedFiles.remove(fileItem) else selectedFiles.add(fileItem)
+                                        }
+                                    } else {
+                                        handleItemClick(context, fileItem, onNavigate, currentPath, category, sortBy, sortAsc, isPicker)
+                                    }
                                 },
                                 onLongClick = {
-                                    selectedFileForActions = fileItem
+                                    if (selectedFiles.isEmpty() && !fileItem.isDirectory) {
+                                        selectedFiles.add(fileItem)
+                                    } else if (selectedFiles.isEmpty() && fileItem.isDirectory) {
+                                        selectedFileForActions = fileItem
+                                    }
                                 }
                             )
                         }
@@ -286,13 +383,30 @@ fun ExplorerScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(filteredFiles) { fileItem ->
+                            val isSelected = selectedFiles.contains(fileItem)
                             ListFileItemView(
                                 item = fileItem,
+                                isSelected = isSelected,
+                                isMultiSelectActive = selectedFiles.isNotEmpty(),
                                 onClick = {
-                                    handleItemClick(context, fileItem, onNavigate)
+                                    if (selectedFiles.isNotEmpty()) {
+                                        if (fileItem.isDirectory) {
+                                            Toast.makeText(context, "Chỉ có thể chọn tập tin để chia sẻ", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            if (isSelected) selectedFiles.remove(fileItem) else selectedFiles.add(fileItem)
+                                        }
+                                    } else {
+                                        handleItemClick(context, fileItem, onNavigate, currentPath, category, sortBy, sortAsc, isPicker)
+                                    }
                                 },
                                 onActionClick = {
-                                    selectedFileForActions = fileItem
+                                    if (selectedFiles.isNotEmpty()) {
+                                        if (!fileItem.isDirectory) {
+                                            if (isSelected) selectedFiles.remove(fileItem) else selectedFiles.add(fileItem)
+                                        }
+                                    } else {
+                                        selectedFileForActions = fileItem
+                                    }
                                 }
                             )
                         }
@@ -471,6 +585,10 @@ fun ExplorerScreen(
                             selectedFileForActions = null
                             shareFile(context, item)
                         }
+                        ActionRow(icon = Icons.Rounded.Checklist, title = "Chọn nhiều", tint = MaterialTheme.colorScheme.onSurface) {
+                            selectedFileForActions = null
+                            selectedFiles.add(item)
+                        }
                     }
                     ActionRow(icon = Icons.Rounded.Info, title = "Chi tiết", tint = MaterialTheme.colorScheme.onSurface) {
                         showDetailsDialog = true
@@ -540,21 +658,29 @@ fun ExplorerScreen(
         val item = selectedFileForActions!!
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
-            title = { Text("Xác nhận xóa", fontWeight = FontWeight.Bold) },
-            text = { Text("Bạn có chắc chắn muốn xóa ${item.name}? Thao tác này không thể hoàn tác.") },
+            title = { Text("Chuyển vào Thùng rác?", fontWeight = FontWeight.Bold) },
+            text = { Text("Bạn có chắc chắn muốn chuyển ${item.name} vào Thùng rác?") },
             confirmButton = {
                 Button(
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
                     onClick = {
                         coroutineScope.launch {
-                            val success = StorageManager.deleteFile(item.path)
-                            if (success) {
-                                Toast.makeText(context, "Đã xóa tập tin/thư mục", Toast.LENGTH_SHORT).show()
-                                showDeleteConfirmDialog = false
-                                selectedFileForActions = null
+                            showDeleteConfirmDialog = false
+                            selectedFileForActions = null
+                            val trashPath = StorageManager.TrashManager.moveToTrash(item.path)
+                            if (trashPath != null) {
                                 refreshFiles()
+                                val snackbarResult = snackbarHostState.showSnackbar(
+                                    message = "Đã chuyển vào Thùng rác: ${item.name}",
+                                    actionLabel = "Hoàn tác",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (snackbarResult == SnackbarResult.ActionPerformed) {
+                                    StorageManager.TrashManager.restoreFromTrash(trashPath)
+                                    refreshFiles()
+                                }
                             } else {
-                                Toast.makeText(context, "Xóa thất bại", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Không thể chuyển vào Thùng rác", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -564,6 +690,56 @@ fun ExplorerScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Hủy")
+                }
+            }
+        )
+    }
+
+    // Multi Delete Confirmation Dialog
+    if (showMultiDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showMultiDeleteConfirmDialog = false },
+            title = { Text("Chuyển vào Thùng rác?", fontWeight = FontWeight.Bold) },
+            text = { Text("Bạn có chắc chắn muốn chuyển ${selectedFiles.size} tập tin đã chọn vào Thùng rác?") },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    onClick = {
+                        coroutineScope.launch {
+                            showMultiDeleteConfirmDialog = false
+                            val filesToDelete = selectedFiles.toList()
+                            selectedFiles.clear()
+                            
+                            val restoredPaths = mutableListOf<String>()
+                            for (f in filesToDelete) {
+                                val path = StorageManager.TrashManager.moveToTrash(f.path)
+                                if (path != null) restoredPaths.add(path)
+                            }
+                            
+                            refreshFiles()
+                            
+                            if (restoredPaths.isNotEmpty()) {
+                                val snackbarResult = snackbarHostState.showSnackbar(
+                                    message = "Đã chuyển ${restoredPaths.size} tập tin vào Thùng rác",
+                                    actionLabel = "Hoàn tác",
+                                    duration = SnackbarDuration.Short
+                                )
+                                if (snackbarResult == SnackbarResult.ActionPerformed) {
+                                    for (p in restoredPaths) {
+                                        StorageManager.TrashManager.restoreFromTrash(p)
+                                    }
+                                    refreshFiles()
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Xóa", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMultiDeleteConfirmDialog = false }) {
                     Text("Hủy")
                 }
             }
@@ -641,20 +817,54 @@ fun ExplorerScreen(
     }
 }
 
-fun handleItemClick(context: Context, item: FileItem, onNavigate: (NavKey) -> Unit) {
+fun handleItemClick(
+    context: Context,
+    item: FileItem,
+    onNavigate: (NavKey) -> Unit,
+    directoryPath: String,
+    category: String,
+    sortBy: String,
+    sortAsc: Boolean,
+    isPicker: Boolean = false
+) {
     if (item.isDirectory) {
-        onNavigate(Explorer(path = item.path))
+        onNavigate(Explorer(path = item.path, category = category, isPicker = isPicker))
     } else {
-        val ext = item.extension.lowercase(Locale.getDefault())
-        when {
-            StorageManager.imageExtensions.contains(ext) -> {
-                onNavigate(com.example.qexplorer.PhotoViewer(path = item.path))
+        if (isPicker) {
+            val file = java.io.File(item.path)
+            try {
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "com.example.qexplorer.fileprovider", file)
+                val resultIntent = android.content.Intent().apply {
+                    data = uri
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                (context as? android.app.Activity)?.apply {
+                    setResult(android.app.Activity.RESULT_OK, resultIntent)
+                    finish()
+                }
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Lỗi chọn tập tin: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
             }
-            StorageManager.videoExtensions.contains(ext) -> {
-                onNavigate(com.example.qexplorer.VideoPlayer(path = item.path))
-            }
-            else -> {
-                openFile(context, item)
+        } else {
+            val ext = item.extension.lowercase(Locale.getDefault())
+            when {
+                StorageManager.imageExtensions.contains(ext) -> {
+                    onNavigate(
+                        com.example.qexplorer.PhotoViewer(
+                            path = item.path,
+                            directoryPath = directoryPath,
+                            category = category,
+                            sortBy = sortBy,
+                            sortAsc = sortAsc
+                        )
+                    )
+                }
+                StorageManager.videoExtensions.contains(ext) -> {
+                    onNavigate(com.example.qexplorer.VideoPlayer(path = item.path))
+                }
+                else -> {
+                    openFile(context, item)
+                }
             }
         }
     }
@@ -688,6 +898,39 @@ fun shareFile(context: Context, fileItem: FileItem) {
         context.startActivity(Intent.createChooser(intent, "Chia sẻ tập tin"))
     } catch (e: Exception) {
         Toast.makeText(context, "Không thể chia sẻ tập tin", Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun shareFiles(context: Context, fileItems: List<FileItem>) {
+    if (fileItems.isEmpty()) return
+    try {
+        val uris = ArrayList<Uri>()
+        for (item in fileItems) {
+            val file = File(item.path)
+            if (!file.isDirectory) {
+                val uri = FileProvider.getUriForFile(context, "com.example.qexplorer.fileprovider", file)
+                uris.add(uri)
+            }
+        }
+        if (uris.isEmpty()) return
+        
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                val uri = uris.first()
+                val mime = context.contentResolver.getType(uri) ?: "*/*"
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "*/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            }
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(intent, "Chia sẻ tập tin"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Không thể chia sẻ tập tin: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -813,76 +1056,105 @@ fun EmptyStateView(isSearch: Boolean, modifier: Modifier = Modifier) {
 @Composable
 fun ListFileItemView(
     item: FileItem,
+    isSelected: Boolean,
+    isMultiSelectActive: Boolean,
     onClick: () -> Unit,
     onActionClick: () -> Unit
 ) {
     val fileIcon = getIconForFile(item)
     val iconColor = getIconColorForFile(item)
+    
+    val alpha = if (isMultiSelectActive && item.isDirectory) 0.38f else 1f
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else Color.Transparent)
             .combinedClickable(
-                onClick = onClick,
+                onClick = {
+                    if (isMultiSelectActive && item.isDirectory) {
+                        // Ignore directories in multi select mode
+                    } else {
+                        onClick()
+                    }
+                },
                 onLongClick = onActionClick
             )
             .padding(vertical = 8.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .background(iconColor.copy(alpha = 0.1f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = fileIcon,
-                contentDescription = null,
-                tint = iconColor,
-                modifier = Modifier.size(20.dp)
+        if (isMultiSelectActive) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { 
+                    if (!item.isDirectory) onClick()
+                },
+                modifier = Modifier.padding(end = 8.dp),
+                enabled = !item.isDirectory
             )
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.name,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier.weight(1f).alpha(alpha),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(iconColor.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
             ) {
+                Icon(
+                    imageVector = fileIcon,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = item.formattedSize,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = item.name,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Box(
-                    modifier = Modifier
-                        .size(3.dp)
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), CircleShape)
-                )
-                Text(
-                    text = item.formattedDate,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = item.formattedSize,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(3.dp)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), CircleShape)
+                    )
+                    Text(
+                        text = item.formattedDate,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
-        IconButton(onClick = onActionClick) {
-            Icon(
-                imageVector = Icons.Rounded.MoreVert,
-                contentDescription = "Options",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        if (!isMultiSelectActive) {
+            IconButton(onClick = onActionClick) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = "Options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
@@ -891,11 +1163,15 @@ fun ListFileItemView(
 @Composable
 fun GridFileItemView(
     item: FileItem,
+    isSelected: Boolean,
+    isMultiSelectActive: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val fileIcon = getIconForFile(item)
     val iconColor = getIconColorForFile(item)
+    
+    val alpha = if (isMultiSelectActive && item.isDirectory) 0.38f else 1f
 
     Card(
         modifier = Modifier
@@ -903,54 +1179,74 @@ fun GridFileItemView(
             .aspectRatio(1f)
             .clip(RoundedCornerShape(16.dp))
             .combinedClickable(
-                onClick = onClick,
+                onClick = {
+                    if (isMultiSelectActive && item.isDirectory) {
+                        // Ignore directories
+                    } else {
+                        onClick()
+                    }
+                },
                 onLongClick = onLongClick
             ),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(iconColor.copy(alpha = 0.1f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = fileIcon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(22.dp)
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isMultiSelectActive && !item.isDirectory) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onClick() },
+                    modifier = Modifier.align(Alignment.TopStart).padding(4.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(alpha)
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(iconColor.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = fileIcon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
-            Text(
-                text = item.name,
-                fontWeight = FontWeight.Medium,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
+                Spacer(modifier = Modifier.height(12.dp))
 
-            Text(
-                text = item.formattedSize,
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center
-            )
+                Text(
+                    text = item.name,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = item.formattedSize,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }

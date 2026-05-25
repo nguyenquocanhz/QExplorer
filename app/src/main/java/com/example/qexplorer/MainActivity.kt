@@ -14,12 +14,19 @@ import androidx.compose.ui.Modifier
 import com.example.qexplorer.data.ThemeSettings
 import com.example.qexplorer.theme.QExplorerTheme
 
+import android.content.Intent
+import androidx.navigation3.runtime.NavKey
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Initialize ThemeSettings preference store
         ThemeSettings.init(this)
+
+        val action = intent?.action
+        val isPicker = action == Intent.ACTION_GET_CONTENT || action == Intent.ACTION_OPEN_DOCUMENT
+        val startDestination: NavKey = if (isPicker) ProviderScreenView else Dashboard
 
         enableEdgeToEdge()
         setContent {
@@ -35,7 +42,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainNavigation()
+                    MainNavigation(startDestination = startDestination)
                 }
             }
         }
